@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0a">
+<title>GVS · BLE DAC Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Unbounded:wght@300;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --panel: #121212;
+    --border: #1f1f1f;
+    --ink: #e8e8e8;
+    --ink-dim: #6a6a6a;
+    --ink-faint: #3a3a3a;
+    --accent: #00ffa3;
+    --accent-dim: #008f5c;
+    --warn: #ff3a3a;
+    --grid: rgba(255, 255, 255, 0.03);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+    overscroll-behavior: none;
+  }
+
+  body {
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 32px 32px;
+    background-position: center;
+  }
+
+  .app {
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    height: 100dvh;
+    padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom);
+    gap: 14px;
+    padding-top: max(env(safe-area-inset-top), 14px);
+    padding-bottom: max(env(safe-area-inset-bottom), 14px);
+  }
+
+  /* --- HEADER --- */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .brand {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.18em;
+  }
+  .brand .dot { color: var(--accent); }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+  }
+  .led {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--warn);
+    box-shadow: 0 0 8px var(--warn);
+    transition: all 0.2s;
+  }
+  .led.on {
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--accent);
+  }
+  .led.pending {
+    background: #ffb43a;
+    box-shadow: 0 0 10px #ffb43a;
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse { 50% { opacity: 0.4; } }
+
+  /* --- MAIN STAGE --- */
+  main {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 14px;
+    min-height: 0;
+  }
+
+  .readout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .gauge {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    position: relative;
+    overflow: hidden;
+  }
+  .gauge .label {
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    color: var(--ink-dim);
+    text-transform: uppercase;
+  }
+  .gauge .value {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 500;
+    font-size: 28px;
+    margin-top: 4px;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .gauge .sub {
+    font-size: 10px;
+    color: var(--ink-faint);
+    margin-top: 2px;
+    letter-spacing: 0.1em;
+  }
+  .bar {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 2px;
+    background: var(--ink-faint);
+  }
+  .bar-fill {
+    position: absolute;
+    top: 0; bottom: 0;
+    left: 50%;
+    width: 0;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    transition: width 0.05s linear, left 0.05s linear;
+  }
+
+  /* --- JOYSTICK --- */
+  .stick-zone {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+  }
+  .stick-base {
+    position: relative;
+    width: min(78vw, 62vh, 380px);
+    aspect-ratio: 1 / 1;
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at center, rgba(0, 255, 163, 0.03) 0%, transparent 60%),
+      var(--panel);
+    border: 1px solid var(--border);
+    box-shadow:
+      inset 0 0 40px rgba(0,0,0,0.6),
+      0 0 0 1px rgba(255,255,255,0.02);
+    overflow: hidden;
+    touch-action: none;
+  }
+  .stick-base::before {
+    content: "";
+    position: absolute;
+    inset: 8%;
+    border-radius: 50%;
+    border: 1px dashed var(--ink-faint);
+    opacity: 0.6;
+  }
+  .stick-base::after {
+    content: "";
+    position: absolute;
+    top: 50%; left: 0; right: 0;
+    height: 1px;
+    background: var(--ink-faint);
+    opacity: 0.4;
+    box-shadow: 0 calc(50vh) 0 -49.5vh var(--ink-faint);
+  }
+  .cross-h, .cross-v {
+    position: absolute;
+    background: var(--ink-faint);
+    opacity: 0.35;
+    pointer-events: none;
+  }
+  .cross-h { left: 8%; right: 8%; top: 50%; height: 1px; }
+  .cross-v { top: 8%; bottom: 8%; left: 50%; width: 1px; }
+
+  .knob {
+    position: absolute;
+    width: 30%;
+    aspect-ratio: 1 / 1;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 35% 35%, #2a2a2a, #0d0d0d 70%);
+    border: 1px solid var(--accent-dim);
+    box-shadow:
+      0 0 0 1px rgba(0, 255, 163, 0.15),
+      0 0 30px rgba(0, 255, 163, 0.25),
+      inset 0 2px 6px rgba(255,255,255,0.08),
+      inset 0 -2px 6px rgba(0,0,0,0.6);
+    pointer-events: none;
+    will-change: transform;
+  }
+  .knob::after {
+    content: "";
+    position: absolute;
+    inset: 35%;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 12px var(--accent);
+    opacity: 0.8;
+  }
+  .knob.active::after { opacity: 1; }
+
+  .stick-labels {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    color: var(--ink-dim);
+  }
+  .stick-labels span {
+    position: absolute;
+    transform: translate(-50%, -50%);
+  }
+  .stick-labels .n { top: 14px; left: 50%; }
+  .stick-labels .s { bottom: 2px; left: 50%; transform: translate(-50%, -100%); }
+  .stick-labels .e { right: 14px; top: 50%; transform: translate(100%, -50%) translateX(-14px); }
+  .stick-labels .w { left: 14px; top: 50%; transform: translate(-100%, -50%) translateX(14px); }
+
+  /* --- FOOTER / CONTROLS --- */
+  footer {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .btn {
+    flex: 1;
+    min-height: 52px;
+    padding: 0 18px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn.primary {
+    background: var(--accent);
+    color: #001a0f;
+    border-color: var(--accent);
+    font-weight: 700;
+  }
+  .btn.primary:disabled {
+    background: var(--panel);
+    color: var(--ink-faint);
+    border-color: var(--border);
+    font-weight: 500;
+  }
+  .btn.danger {
+    color: var(--warn);
+    border-color: rgba(255, 58, 58, 0.3);
+  }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* --- SETTINGS PANEL --- */
+  .settings-toggle {
+    flex: 0 0 52px;
+    padding: 0;
+  }
+  .settings {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: 100;
+    display: none;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .settings.open { display: flex; }
+  .settings-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 16px 16px 0 0;
+    width: 100%;
+    max-width: 520px;
+    padding: 24px 20px calc(24px + env(safe-area-inset-bottom));
+    max-height: 85dvh;
+    overflow-y: auto;
+  }
+  .settings-panel h2 {
+    font-family: 'Unbounded', sans-serif;
+    font-size: 14px;
+    letter-spacing: 0.18em;
+    margin-bottom: 18px;
+    text-transform: uppercase;
+  }
+  .setting {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+    gap: 12px;
+  }
+  .setting:last-of-type { border-bottom: none; }
+  .setting label {
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    flex: 1;
+  }
+  .setting label small {
+    display: block;
+    color: var(--ink-faint);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    margin-top: 3px;
+    text-transform: none;
+  }
+
+  /* Toggle */
+  .toggle {
+    position: relative;
+    width: 44px;
+    height: 24px;
+    background: var(--border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background 0.2s;
+    flex: 0 0 44px;
+  }
+  .toggle.on { background: var(--accent-dim); }
+  .toggle::after {
+    content: "";
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 20px; height: 20px;
+    background: var(--ink);
+    border-radius: 50%;
+    transition: transform 0.2s;
+  }
+  .toggle.on::after { transform: translateX(20px); background: var(--accent); }
+
+  /* Slider */
+  .slider-wrap {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 0 0 180px;
+  }
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 2px;
+    background: var(--border);
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px; height: 16px;
+    background: var(--accent);
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 0 8px var(--accent);
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 16px; height: 16px;
+    background: var(--accent);
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+  }
+  .slider-val {
+    font-size: 11px;
+    color: var(--ink);
+    min-width: 32px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* --- TOAST --- */
+  .toast {
+    position: fixed;
+    top: calc(env(safe-area-inset-top) + 70px);
+    left: 50%;
+    transform: translateX(-50%) translateY(-20px);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.3s;
+    z-index: 200;
+    max-width: 90vw;
+    text-align: center;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  .toast.err { border-color: var(--warn); color: var(--warn); }
+
+  /* Browser compat warning */
+  .compat {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    z-index: 300;
+    text-align: center;
+  }
+  .compat.show { display: flex; }
+  .compat-inner {
+    max-width: 400px;
+    padding: 30px;
+    border: 1px solid var(--warn);
+    border-radius: 12px;
+  }
+  .compat h1 {
+    font-family: 'Unbounded', sans-serif;
+    color: var(--warn);
+    font-size: 16px;
+    letter-spacing: 0.18em;
+    margin-bottom: 16px;
+  }
+  .compat p { font-size: 12px; line-height: 1.7; color: var(--ink-dim); }
+  .compat code { color: var(--accent); }
+
+  @media (max-height: 600px) {
+    .gauge .value { font-size: 22px; }
+    .stick-base { width: min(60vw, 50vh); }
+  }
+</style>
+</head>
+<body>
+
+<div class="compat" id="compat">
+  <div class="compat-inner">
+    <h1>WEB BLUETOOTH UNAVAILABLE</h1>
+    <p>
+      This controller requires Web Bluetooth.<br><br>
+      On Android, use <code>Chrome</code>.<br>
+      Open this page via <code>https://</code> or <code>localhost</code> — <code>file://</code> URLs are blocked.
+    </p>
+  </div>
+</div>
+
+<div class="app">
+  <header>
+    <div class="brand">GVS<span class="dot">·</span>CTRL</div>
+    <div class="status">
+      <span id="statusText">DISCONNECTED</span>
+      <div class="led" id="led"></div>
+    </div>
+  </header>
+
+  <main>
+    <div class="readout">
+      <div class="gauge">
+        <div class="label">DAC 1 · GPIO25</div>
+        <div class="value" id="dac1Val">127</div>
+        <div class="sub">Y · 1.65 V</div>
+        <div class="bar"><div class="bar-fill" id="dac1Bar"></div></div>
+      </div>
+      <div class="gauge">
+        <div class="label">DAC 2 · GPIO26</div>
+        <div class="value" id="dac2Val">127</div>
+        <div class="sub">X · 1.65 V</div>
+        <div class="bar"><div class="bar-fill" id="dac2Bar"></div></div>
+      </div>
+    </div>
+
+    <div class="stick-zone">
+      <div class="stick-base" id="stickBase">
+        <div class="cross-h"></div>
+        <div class="cross-v"></div>
+        <div class="stick-labels">
+          <span class="n">+Y</span>
+          <span class="s">−Y</span>
+          <span class="e">+X</span>
+          <span class="w">−X</span>
+        </div>
+        <div class="knob" id="knob"></div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <button class="btn primary" id="connectBtn">CONNECT</button>
+    <button class="btn danger" id="centerBtn">CENTER</button>
+    <button class="btn settings-toggle" id="settingsBtn" aria-label="Settings">⚙</button>
+  </footer>
+</div>
+
+<div class="settings" id="settings">
+  <div class="settings-panel">
+    <h2>Configuration</h2>
+
+    <div class="setting">
+      <label>Swap Axes<small>X→DAC2, Y→DAC1</small></label>
+      <div class="toggle on" id="swapToggle" data-key="swap"></div>
+    </div>
+
+    <div class="setting">
+      <label>Invert X</label>
+      <div class="toggle" id="invertXToggle" data-key="invertX"></div>
+    </div>
+
+    <div class="setting">
+      <label>Invert Y</label>
+      <div class="toggle on" id="invertYToggle" data-key="invertY"></div>
+    </div>
+
+    <div class="setting">
+      <label>Strength<small>Output range scale</small></label>
+      <div class="slider-wrap">
+        <input type="range" id="strengthSlider" min="0.1" max="1.0" step="0.05" value="1.0">
+        <div class="slider-val" id="strengthVal">1.00</div>
+      </div>
+    </div>
+
+    <div class="setting">
+      <label>Deadzone</label>
+      <div class="slider-wrap">
+        <input type="range" id="deadzoneSlider" min="0" max="0.3" step="0.01" value="0.1">
+        <div class="slider-val" id="deadzoneVal">0.10</div>
+      </div>
+    </div>
+
+    <div class="setting">
+      <label>Sample Rate<small>Hz · must match firmware</small></label>
+      <div class="slider-wrap">
+        <input type="range" id="rateSlider" min="10" max="60" step="5" value="30">
+        <div class="slider-val" id="rateVal">30</div>
+      </div>
+    </div>
+
+    <div class="setting">
+      <label>Ramp Rate<small>units/step on ESP32</small></label>
+      <div class="slider-wrap">
+        <input type="range" id="rampSlider" min="1" max="30" step="1" value="5">
+        <div class="slider-val" id="rampVal">5</div>
+      </div>
+    </div>
+
+    <button class="btn" id="closeSettingsBtn" style="margin-top: 20px; width: 100%;">CLOSE</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // ============ CONFIG ============
+  const SERVICE_UUID   = "072fe87c-5c8b-49c1-b0e1-99acf2856f16";
+  const DAC_CHAR_UUID  = "be7c2d4e-7d9c-4ca9-b393-2987e46e1c0c";
+  const RAMP_CHAR_UUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+  const DEVICE_NAME    = "ESP32_DAC_CTRL";
+  const DAC_MID = 127, DAC_MIN = 0, DAC_MAX = 255;
+  const AXIS1_FLAG = 0x01, AXIS2_FLAG = 0x02;
+
+  // ============ STATE ============
+  const state = {
+    stickX: 0, stickY: 0,
+    dac1: DAC_MID, dac2: DAC_MID,
+    dragging: false,
+    device: null, server: null, dacChar: null, rampChar: null,
+    connected: false,
+    sendTimer: null,
+    pendingSend: false,
+    // settings
+    swap: true, invertX: false, invertY: true,
+    strength: 1.0, deadzone: 0.1,
+    sampleRate: 30, rampRate: 5,
+  };
+
+  // ============ COMPAT CHECK ============
+  if (!navigator.bluetooth) {
+    document.getElementById('compat').classList.add('show');
+  }
+
+  // ============ DOM ============
+  const $ = id => document.getElementById(id);
+  const stickBase = $('stickBase');
+  const knob = $('knob');
+  const dac1Val = $('dac1Val'), dac2Val = $('dac2Val');
+  const dac1Bar = $('dac1Bar'), dac2Bar = $('dac2Bar');
+  const led = $('led'), statusText = $('statusText');
+  const connectBtn = $('connectBtn');
+  const toastEl = $('toast');
+
+  // ============ TOAST ============
+  let toastTimer;
+  function toast(msg, isErr = false) {
+    toastEl.textContent = msg;
+    toastEl.classList.toggle('err', isErr);
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400);
+  }
+
+  // ============ JOYSTICK ============
+  function applyDeadzone(v) {
+    if (Math.abs(v) < state.deadzone) return 0;
+    const sign = v > 0 ? 1 : -1;
+    return sign * (Math.abs(v) - state.deadzone) / (1 - state.deadzone);
+  }
+
+  function updateKnob(nx, ny) {
+    // nx, ny are normalized -1..1 relative to base center
+    const mag = Math.hypot(nx, ny);
+    if (mag > 1) { nx /= mag; ny /= mag; }
+    const r = stickBase.clientWidth / 2;
+    // knob max offset = r * 0.7 (30% knob, keep inside)
+    const offset = r * 0.7;
+    knob.style.transform = `translate(calc(-50% + ${nx * offset}px), calc(-50% + ${ny * offset}px))`;
+
+    state.stickX = applyDeadzone(nx);
+    state.stickY = applyDeadzone(-ny); // invert: up = positive Y
+    computeDAC();
+  }
+
+  function resetKnob() {
+    knob.style.transform = 'translate(-50%, -50%)';
+    state.stickX = 0; state.stickY = 0;
+    computeDAC();
+  }
+
+  function computeDAC() {
+    let x = state.invertX ? -state.stickX : state.stickX;
+    let y = state.invertY ? -state.stickY : state.stickY;
+    const span = (DAC_MAX - DAC_MID) * state.strength;
+    let d1, d2;
+    if (state.swap) {
+      d2 = Math.round(DAC_MID + x * span);
+      d1 = Math.round(DAC_MID + y * span);
+    } else {
+      d1 = Math.round(DAC_MID + x * span);
+      d2 = Math.round(DAC_MID + y * span);
+    }
+    state.dac1 = Math.max(DAC_MIN, Math.min(DAC_MAX, d1));
+    state.dac2 = Math.max(DAC_MIN, Math.min(DAC_MAX, d2));
+    renderReadout();
+  }
+
+  function renderReadout() {
+    dac1Val.textContent = state.dac1;
+    dac2Val.textContent = state.dac2;
+    const v1 = (state.dac1 / 255 * 3.3).toFixed(2);
+    const v2 = (state.dac2 / 255 * 3.3).toFixed(2);
+    dac1Val.nextElementSibling.textContent = `${state.swap ? 'Y' : 'X'} · ${v1} V`;
+    dac2Val.nextElementSibling.textContent = `${state.swap ? 'X' : 'Y'} · ${v2} V`;
+    setBar(dac1Bar, state.dac1);
+    setBar(dac2Bar, state.dac2);
+    knob.classList.toggle('active', state.dragging);
+  }
+
+  function setBar(el, val) {
+    // Fill from center outward
+    const pct = (val - DAC_MID) / (DAC_MAX - DAC_MID); // -1..1
+    if (pct >= 0) {
+      el.style.left = '50%';
+      el.style.width = (pct * 50) + '%';
+    } else {
+      el.style.left = (50 + pct * 50) + '%';
+      el.style.width = (-pct * 50) + '%';
+    }
+  }
+
+  // ---- Pointer handling ----
+  let activePointerId = null;
+
+  function handlePointer(e) {
+    const rect = stickBase.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const nx = (e.clientX - cx) / (rect.width / 2);
+    const ny = (e.clientY - cy) / (rect.height / 2);
+    updateKnob(nx, ny);
+  }
+
+  stickBase.addEventListener('pointerdown', (e) => {
+    if (activePointerId !== null) return;
+    activePointerId = e.pointerId;
+    state.dragging = true;
+    stickBase.setPointerCapture(e.pointerId);
+    handlePointer(e);
+  });
+
+  stickBase.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== activePointerId) return;
+    handlePointer(e);
+  });
+
+  function endPointer(e) {
+    if (e.pointerId !== activePointerId) return;
+    activePointerId = null;
+    state.dragging = false;
+    resetKnob();
+  }
+  stickBase.addEventListener('pointerup', endPointer);
+  stickBase.addEventListener('pointercancel', endPointer);
+  stickBase.addEventListener('pointerleave', endPointer);
+
+  // ============ BLE ============
+  async function connect() {
+    if (state.connected) return disconnect();
+
+    try {
+      setStatus('scanning', 'SCANNING');
+      connectBtn.disabled = true;
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ name: DEVICE_NAME }],
+        optionalServices: [SERVICE_UUID],
+      });
+      state.device = device;
+      device.addEventListener('gattserverdisconnected', onDisconnected);
+
+      setStatus('pending', 'CONNECTING');
+      const server = await device.gatt.connect();
+      state.server = server;
+
+      const service = await server.getPrimaryService(SERVICE_UUID);
+      state.dacChar  = await service.getCharacteristic(DAC_CHAR_UUID);
+      try {
+        state.rampChar = await service.getCharacteristic(RAMP_CHAR_UUID);
+        await state.rampChar.writeValueWithResponse(new Uint8Array([state.rampRate]));
+      } catch { /* ramp char optional */ }
+
+      state.connected = true;
+      setStatus('on', 'CONNECTED');
+      connectBtn.textContent = 'DISCONNECT';
+      connectBtn.classList.remove('primary');
+      connectBtn.disabled = false;
+      toast('Connected to ' + device.name);
+      startSendLoop();
+    } catch (err) {
+      console.error(err);
+      setStatus('off', 'DISCONNECTED');
+      connectBtn.textContent = 'CONNECT';
+      connectBtn.classList.add('primary');
+      connectBtn.disabled = false;
+      if (err.name !== 'NotFoundError') {
+        toast(err.message || 'Connection failed', true);
+      }
+    }
+  }
+
+  async function disconnect() {
+    stopSendLoop();
+    try {
+      // Send center before disconnecting
+      if (state.dacChar) {
+        await state.dacChar.writeValueWithoutResponse(
+          new Uint8Array([AXIS1_FLAG | AXIS2_FLAG, DAC_MID, DAC_MID])
+        );
+      }
+    } catch {}
+    if (state.device?.gatt?.connected) state.device.gatt.disconnect();
+    onDisconnected();
+  }
+
+  function onDisconnected() {
+    state.connected = false;
+    stopSendLoop();
+    state.device = null; state.server = null; state.dacChar = null; state.rampChar = null;
+    setStatus('off', 'DISCONNECTED');
+    connectBtn.textContent = 'CONNECT';
+    connectBtn.classList.add('primary');
+    connectBtn.disabled = false;
+  }
+
+  function setStatus(cls, text) {
+    led.className = 'led ' + (cls === 'on' ? 'on' : cls === 'pending' || cls === 'scanning' ? 'pending' : '');
+    statusText.textContent = text;
+  }
+
+  // ---- Send loop ----
+  function startSendLoop() {
+    stopSendLoop();
+    const interval = 1000 / state.sampleRate;
+    state.sendTimer = setInterval(sendSample, interval);
+  }
+  function stopSendLoop() {
+    if (state.sendTimer) { clearInterval(state.sendTimer); state.sendTimer = null; }
+  }
+
+  async function sendSample() {
+    if (!state.connected || !state.dacChar || state.pendingSend) return;
+    state.pendingSend = true;
+    try {
+      const packet = new Uint8Array([AXIS1_FLAG | AXIS2_FLAG, state.dac1, state.dac2]);
+      await state.dacChar.writeValueWithoutResponse(packet);
+    } catch (err) {
+      console.error('send err', err);
+    } finally {
+      state.pendingSend = false;
+    }
+  }
+
+  connectBtn.addEventListener('click', connect);
+
+  // ============ CENTER BUTTON ============
+  $('centerBtn').addEventListener('click', async () => {
+    resetKnob();
+    if (state.connected && state.dacChar) {
+      try {
+        await state.dacChar.writeValueWithoutResponse(
+          new Uint8Array([AXIS1_FLAG | AXIS2_FLAG, DAC_MID, DAC_MID])
+        );
+        toast('Centered · 1.65 V');
+      } catch (e) { toast('Send failed', true); }
+    } else {
+      toast('Centered (not connected)');
+    }
+  });
+
+  // ============ SETTINGS ============
+  const settingsEl = $('settings');
+  $('settingsBtn').addEventListener('click', () => settingsEl.classList.add('open'));
+  $('closeSettingsBtn').addEventListener('click', () => settingsEl.classList.remove('open'));
+  settingsEl.addEventListener('click', (e) => {
+    if (e.target === settingsEl) settingsEl.classList.remove('open');
+  });
+
+  // Toggles
+  document.querySelectorAll('.toggle').forEach(t => {
+    t.addEventListener('click', () => {
+      t.classList.toggle('on');
+      state[t.dataset.key] = t.classList.contains('on');
+      saveSettings();
+      computeDAC();
+    });
+  });
+
+  // Sliders
+  function bindSlider(sliderId, valId, key, format = v => v) {
+    const s = $(sliderId), v = $(valId);
+    s.addEventListener('input', () => {
+      const val = parseFloat(s.value);
+      state[key] = val;
+      v.textContent = format(val);
+      saveSettings();
+      if (key === 'sampleRate' && state.connected) startSendLoop();
+      if (key === 'rampRate' && state.rampChar) {
+        state.rampChar.writeValueWithResponse(new Uint8Array([val])).catch(()=>{});
+      }
+      computeDAC();
+    });
+  }
+  bindSlider('strengthSlider', 'strengthVal', 'strength', v => v.toFixed(2));
+  bindSlider('deadzoneSlider', 'deadzoneVal', 'deadzone', v => v.toFixed(2));
+  bindSlider('rateSlider',     'rateVal',     'sampleRate', v => v.toFixed(0));
+  bindSlider('rampSlider',     'rampVal',     'rampRate',   v => v.toFixed(0));
+
+  // ============ PERSISTENCE ============
+  function saveSettings() {
+    const toSave = {
+      swap: state.swap, invertX: state.invertX, invertY: state.invertY,
+      strength: state.strength, deadzone: state.deadzone,
+      sampleRate: state.sampleRate, rampRate: state.rampRate,
+    };
+    try { localStorage.setItem('gvs_settings', JSON.stringify(toSave)); } catch {}
+  }
+  function loadSettings() {
+    try {
+      const raw = localStorage.getItem('gvs_settings');
+      if (!raw) return;
+      const s = JSON.parse(raw);
+      Object.assign(state, s);
+      // Sync UI
+      const setToggle = (id, on) => $(id).classList.toggle('on', !!on);
+      setToggle('swapToggle', state.swap);
+      setToggle('invertXToggle', state.invertX);
+      setToggle('invertYToggle', state.invertY);
+      $('strengthSlider').value = state.strength; $('strengthVal').textContent = state.strength.toFixed(2);
+      $('deadzoneSlider').value = state.deadzone; $('deadzoneVal').textContent = state.deadzone.toFixed(2);
+      $('rateSlider').value = state.sampleRate;   $('rateVal').textContent = state.sampleRate.toFixed(0);
+      $('rampSlider').value = state.rampRate;     $('rampVal').textContent = state.rampRate.toFixed(0);
+    } catch {}
+  }
+
+  // ============ INIT ============
+  loadSettings();
+  resetKnob();
+  renderReadout();
+
+  // Prevent scroll-bounce on iOS/Android
+  document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+</script>
+
+</body>
+</html>
