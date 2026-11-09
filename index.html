@@ -95,6 +95,23 @@
     animation: pulse 1s infinite;
   }
   @keyframes pulse { 50% { opacity: 0.4; } }
+  .pad-icon {
+    width: 22px; height: 22px;
+    flex: 0 0 22px;
+    margin-right: 4px;
+    color: var(--ink-dim);
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: color 0.2s;
+  }
+  .pad-icon .pad-btn { fill: currentColor; stroke: none; }
+  .pad-icon .pad-slash-gap { stroke: var(--panel); stroke-width: 4.5; }
+  .pad-icon .pad-slash-line { stroke: var(--warn); stroke-width: 1.8; }
+  .pad-icon.on { color: var(--accent); }
+  .pad-icon.on .pad-slash-gap, .pad-icon.on .pad-slash-line { display: none; }
 
   /* --- MAIN STAGE --- */
   main {
@@ -492,6 +509,14 @@
   <header>
     <div class="brand">GVS<span class="dot">·</span>CTRL</div>
     <div class="status">
+      <svg class="pad-icon" id="padIcon" viewBox="0 0 24 24" role="img" aria-label="No controller detected">
+        <path d="M7.5 7h9a4.5 4.5 0 0 1 4.4 3.6l.9 4.6a2.6 2.6 0 0 1-4.5 2.2l-1.8-1.9h-7l-1.8 1.9a2.6 2.6 0 0 1-4.5-2.2l.9-4.6A4.5 4.5 0 0 1 7.5 7z"/>
+        <path d="M8 9.6v2.8M6.6 11h2.8"/>
+        <circle class="pad-btn" cx="15.2" cy="12" r="1"/>
+        <circle class="pad-btn" cx="17.4" cy="10" r="1"/>
+        <line class="pad-slash-gap" x1="4" y1="20.5" x2="20" y2="3.5"/>
+        <line class="pad-slash-line" x1="4" y1="20.5" x2="20" y2="3.5"/>
+      </svg>
       <span id="statusText">DISCONNECTED</span>
       <div class="led" id="led"></div>
     </div>
@@ -926,11 +951,22 @@
   // Below this radius the stick counts as released, so worn-stick drift
   // can't hold the output off-centre even with the Deadzone slider at 0.
   const GP_REST = 0.15;
-  const gp = { active: false, armed: new Set() };
+  const gp = { active: false, armed: new Set(), detected: false };
+  const padIcon = $('padIcon');
+
+  const usablePads = () => [...navigator.getGamepads()].filter(
+    pad => pad && pad.connected && pad.axes.length >= 4
+  );
+
+  function updatePadIcon(detected) {
+    if (detected === gp.detected) return;
+    gp.detected = detected;
+    padIcon.classList.toggle('on', detected);
+    padIcon.setAttribute('aria-label', detected ? 'Controller detected' : 'No controller detected');
+  }
 
   function readRightStick() {
-    for (const pad of navigator.getGamepads()) {
-      if (!pad || pad.axes.length < 4) continue;
+    for (const pad of usablePads()) {
       const x = pad.axes[2], y = pad.axes[3];
       const mag = Math.hypot(x, y);
       if (mag < GP_REST) { gp.armed.add(pad.index); continue; }
@@ -953,6 +989,7 @@
 
   function pollGamepad() {
     requestAnimationFrame(pollGamepad);
+    updatePadIcon(usablePads().length > 0);
     // Touch takes priority while a finger is on the joystick
     if (state.dragging) { gp.active = false; return; }
     const stick = readRightStick();
