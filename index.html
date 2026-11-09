@@ -694,7 +694,7 @@
     dac2Val.nextElementSibling.textContent = `${state.swap ? 'X' : 'Y'} · ${v2} V`;
     setBar(dac1Bar, state.dac1);
     setBar(dac2Bar, state.dac2);
-    knob.classList.toggle('active', state.dragging);
+    knob.classList.toggle('active', state.dragging || gp.active);
   }
 
   function setBar(el, val) {
@@ -922,10 +922,67 @@
     } catch {}
   }
 
+  // ============ GAMEPAD (right stick) ============
+  // Below this radius the stick counts as released, so worn-stick drift
+  // can't hold the output off-centre even with the Deadzone slider at 0.
+  const GP_REST = 0.15;
+  const gp = { active: false, armed: new Set() };
+
+  function readRightStick() {
+    for (const pad of navigator.getGamepads()) {
+      if (!pad || pad.axes.length < 4) continue;
+      const x = pad.axes[2], y = pad.axes[3];
+      const mag = Math.hypot(x, y);
+      if (mag < GP_REST) { gp.armed.add(pad.index); continue; }
+      // A pad only counts once its stick has been seen at rest. This ignores
+      // a stick held during connect, and axes that idle off-centre (triggers
+      // sitting at -1 on controllers without the standard layout).
+      if (!gp.armed.has(pad.index)) continue;
+      // Rescale so output starts from 0 at the edge of the rest zone
+      const scale = (Math.min(mag, 1) - GP_REST) / (1 - GP_REST) / mag;
+      return { x: x * scale, y: y * scale };
+    }
+    return null;
+  }
+
+  function releaseGamepad() {
+    if (!gp.active) return;
+    gp.active = false;
+    if (!state.dragging) resetKnob();
+  }
+
+  function pollGamepad() {
+    requestAnimationFrame(pollGamepad);
+    // Touch takes priority while a finger is on the joystick
+    if (state.dragging) { gp.active = false; return; }
+    const stick = readRightStick();
+    if (stick) {
+      gp.active = true;
+      updateKnob(stick.x, stick.y); // gamepad Y is already up = negative, same as screen
+    } else {
+      releaseGamepad();
+    }
+  }
+
+  window.addEventListener('gamepadconnected', (e) => {
+    if (e.gamepad.mapping === 'standard') toast('Controller connected · right stick active');
+    else toast('Controller layout not recognised · right stick may be wrong', true);
+  });
+  window.addEventListener('gamepaddisconnected', (e) => {
+    gp.armed.delete(e.gamepad.index);
+    releaseGamepad();
+    toast('Controller disconnected', true);
+  });
+  // Polling stops while the page is hidden, so centre rather than hold the last value
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) releaseGamepad();
+  });
+
   // ============ INIT ============
   loadSettings();
   resetKnob();
   renderReadout();
+  if (navigator.getGamepads) pollGamepad();
 
   // Prevent scroll-bounce on iOS/Android
   document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
